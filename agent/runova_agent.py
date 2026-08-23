@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 import os
+import platform
 import sys
 import tempfile
 import threading
@@ -10,16 +12,17 @@ import uuid
 import requests
 
 from websocket_client import WebSocketClient
-from printer import download_pdf, print_pdf
+from printer import download_pdf, print_pdf, open_pdf
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()],
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("agent")
 
 DEFAULT_SERVER = "http://localhost:8000"
+SYSTEM = platform.system()
 
 
 class RunovaAgent:
@@ -30,12 +33,22 @@ class RunovaAgent:
         self.ws_client = None
         self._running = False
         self._preview_shown = set()
+        self._has_tkinter = self._check_tkinter()
+
+    def _check_tkinter(self):
+        try:
+            import tkinter
+            return True
+        except ImportError:
+            return False
 
     def run(self):
         logger.info("=" * 50)
         logger.info("  Runova Print Agent")
-        logger.info(f"  Server:  {self.server_url}")
-        logger.info(f"  Device:  {self.device_id[:12]}...")
+        logger.info(f"  Platform:  {SYSTEM}")
+        logger.info(f"  Server:    {self.server_url}")
+        logger.info(f"  Device:    {self.device_id[:12]}...")
+        logger.info(f"  Tkinter:   {'Yes' if self._has_tkinter else 'No (console mode)'}")
         logger.info("=" * 50)
 
         self.shop_id = self._setup_shop()
@@ -44,6 +57,10 @@ class RunovaAgent:
             return
 
         logger.info(f"Shop ID: {self.shop_id}")
+        logger.info("")
+        logger.info("Share this URL with customers:")
+        logger.info(f"  {self.server_url}/?shop_id={self.shop_id}")
+        logger.info("")
         self._running = True
 
         self.ws_client = WebSocketClient(
@@ -74,7 +91,7 @@ class RunovaAgent:
     def _setup_shop(self) -> str | None:
         try:
             url = f"{self.server_url}/api/v1/shop/{self.device_id}"
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, timeout=10)
             if resp.status_code == 200:
                 shop = resp.json()
                 logger.info(f"Found existing shop: {shop['shop_name']}")
@@ -87,7 +104,7 @@ class RunovaAgent:
             resp = requests.post(
                 url,
                 json={"shop_name": f"Shop {self.device_id[:8]}", "device_id": self.device_id},
-                timeout=5,
+                timeout=10,
             )
             if resp.status_code == 201:
                 shop = resp.json()
@@ -101,15 +118,17 @@ class RunovaAgent:
         msg_type = data.get("type")
         if msg_type == "new_job":
             job_id = data.get("job_id")
-            logger.info(f"New job: {job_id}")
+            logger.info(f"NEW JOB: {job_id}")
             threading.Thread(target=self._process_job, args=(job_id,), daemon=True).start()
 
     def _process_job(self, job_id: str):
         try:
             resp = requests.get(f"{self.server_url}/api/v1/jobs/{job_id}", timeout=10)
             if resp.status_code != 200:
+                logger.error(f"Failed to get job {job_id}: HTTP {resp.status_code}")
                 return
             job = resp.json()
+            logger.info(f"Job {job_id}: status={job['status']}, docs={len(job['documents'])}")
             for doc in job.get("documents", []):
                 if doc["status"] == "READY" and doc["document_id"] not in self._preview_shown:
                     self._handle_document(doc)
@@ -129,12 +148,59 @@ class RunovaAgent:
             logger.error(f"Failed to download PDF for {doc_id}")
             return
 
-        self._show_popup(doc_id, doc_type, pdf_path)
+        if self._has_tkinter:
+            self._show_popup(doc_id, doc_type, pdf_path)
+        else:
+            self._show_console(doc_id, doc_type, pdf_path)
+
+    def _show_console(self, doc_id: str, doc_type: str, pdf_path: str):
+        logger.info("=" * 50)
+        logger.info(f"  DOCUMENT READY: {doc_type.replace('_', ' ').title()}")
+        logger.info(f"  PDF: {pdf_path}")
+        logger.info("=" * 50)
+        logger.info("  Commands:")
+        logger.info("    p = Print")
+        logger.info("    o = Open PDF")
+        logger.info("    s = Skip")
+        logger.info("    q = Quit")
+        logger.info("=" * 50)
+
+        try:
+            while True:
+                choice = input("  Your choice: ").strip().lower()
+                if choice == "p":
+                    logger.info("Printing...")
+                    success = print_pdf(pdf_path)
+                    if success:
+                        logger.info("Print sent!")
+                        try:
+                            loop = asyncio.new_event_loop()
+                            loop.run_until_complete(
+                                self.ws_client.send({"type": "print_complete", "document_id": doc_id})
+                            )
+                            loop.close()
+                        except Exception:
+                            pass
+                    else:
+                        logger.error("Print failed!")
+                    break
+                elif choice == "o":
+                    open_pdf(pdf_path)
+                    logger.info("PDF opened")
+                elif choice == "s":
+                    logger.info("Skipped")
+                    break
+                elif choice == "q":
+                    self._running = False
+                    break
+                else:
+                    logger.info("Invalid choice. Enter p, o, s, or q.")
+        except (EOFError, KeyboardInterrupt):
+            logger.info("Skipped (no input)")
 
     def _show_popup(self, doc_id: str, doc_type: str, pdf_path: str):
         try:
             import tkinter as tk
-            from tkinter import messagebox, font as tkfont
 
             root = tk.Tk()
             root.title("Runova Print")
@@ -200,11 +266,9 @@ class RunovaAgent:
 
             root.mainloop()
 
-        except ImportError:
-            logger.warning("tkinter not available. Using console output.")
-            logger.info(f"Document {doc_id[:8]} ready: {doc_type} -> {pdf_path}")
         except Exception as e:
-            logger.error(f"Popup error: {e}")
+            logger.warning(f"Popup failed ({e}), falling back to console")
+            self._show_console(doc_id, doc_type, pdf_path)
 
     def _poll_loop(self):
         while self._running:
@@ -213,19 +277,19 @@ class RunovaAgent:
                     f"{self.server_url}/api/v1/shop/{self.shop_id}/pending", timeout=10
                 )
                 if resp.status_code == 200:
-                    for job in resp.json().get("jobs", []):
+                    jobs = resp.json().get("jobs", [])
+                    if jobs:
+                        logger.info(f"Poll: {len(jobs)} pending job(s)")
+                    for job in jobs:
                         if job["status"] in ("READY", "PREVIEW"):
                             for doc in job.get("documents", []):
                                 if doc["status"] == "READY" and doc["document_id"] not in self._preview_shown:
                                     threading.Thread(
                                         target=self._handle_document, args=(doc,), daemon=True
                                     ).start()
-            except Exception:
-                pass
-            time.sleep(5)
-
-
-import asyncio
+            except Exception as e:
+                logger.debug(f"Poll error: {e}")
+            time.sleep(3)
 
 
 def main():

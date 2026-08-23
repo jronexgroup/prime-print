@@ -32,6 +32,9 @@ def validate_file(file: UploadFile) -> None:
 async def process_job_background(job_id: str):
     from app.processing.pipeline import process_document
     from app.database import async_session
+    from app.ws.connection import manager
+
+    print(f"[BACKGROUND] Starting processing for job {job_id}")
 
     async with async_session() as db:
         result = await db.execute(
@@ -41,6 +44,7 @@ async def process_job_background(job_id: str):
 
         for doc in documents:
             try:
+                print(f"[BACKGROUND] Processing document {doc.document_id}")
                 await JobManager.transition_document(db, doc.document_id, "VALIDATING")
                 await db.commit()
 
@@ -48,16 +52,19 @@ async def process_job_background(job_id: str):
                 await db.commit()
 
                 output = process_document(doc.input_path)
+                print(f"[BACKGROUND] Document processed: {output['document_type']}")
 
                 doc.output_path = output["output_path"]
                 doc.preview_path = output["preview_path"]
                 doc.document_type = output["document_type"]
                 await JobManager.transition_document(db, doc.document_id, "READY")
                 await db.commit()
+                print(f"[BACKGROUND] Document {doc.document_id} marked READY")
 
             except Exception as e:
                 import traceback
                 traceback.print_exc()
+                print(f"[BACKGROUND] Document {doc.document_id} FAILED: {e}")
                 await JobManager.transition_document(
                     db, doc.document_id, "FAILED", error=str(e)
                 )
@@ -70,6 +77,25 @@ async def process_job_background(job_id: str):
             target = "FAILED" if has_failed else "READY"
             await JobManager.transition_job(db, job_id, target)
             await db.commit()
+            print(f"[BACKGROUND] Job {job_id} completed: {target}")
+
+            if target == "READY":
+                try:
+                    shop = await db.execute(
+                        select(Shop).where(Shop.shop_id == job.shop_id)
+                    )
+                    shop = shop.scalar_one_or_none()
+                    if shop and shop.device_id:
+                        notification = {
+                            "type": "new_job",
+                            "job_id": job_id,
+                            "shop_id": job.shop_id,
+                            "document_count": len(job.documents),
+                        }
+                        await manager.send_to_device(shop.device_id, notification)
+                        print(f"[BACKGROUND] Notified device {shop.device_id}")
+                except Exception as e:
+                    print(f"[BACKGROUND] WebSocket notify error: {e}")
 
 
 def _preview_url(doc_id: str) -> str:
