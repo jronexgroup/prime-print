@@ -1,0 +1,25 @@
+{
+  "document_name": "PAN Card",
+  "document_id": "pan",
+  "detection_rules": {
+    "keywords": ["INCOME TAX DEPARTMENT", "Permanent Account Number", "पैन"],
+    "id_pattern": "[A-Z]{5}\\d{4}[A-Z]",
+    "geometry": {
+      "expected_aspect_ratio": 1.586,
+      "tolerance": 0.15
+    }
+  },
+  "target_width_mm": 85.6,
+  "target_height_mm": 54.0,
+  "target_width_px": 1063,
+  "target_height_px": 674,
+  "aspect_ratio": 1.586,
+  "margin_mm": 3.0,
+  "margin_px": 37,
+  "color_mode": "grayscale",
+  "print_configuration": {
+    "orientation": "landscape",
+    "duplex": false,
+    "copies": 1
+  }
+}

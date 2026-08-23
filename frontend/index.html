@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Runova Print</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container" id="app">
+        <header class="header">
+            <div class="logo">RUNOVA PRINT</div>
+            <p class="subtitle">Upload your document</p>
+        </header>
+
+        <div id="shop-info" class="shop-info hidden">
+            <span id="shop-name"></span>
+        </div>
+
+        <div id="upload-section" class="upload-section">
+            <div class="button-group">
+                <label class="btn btn-primary" for="camera-input">
+                    <span class="btn-icon">📷</span>
+                    Take Photo
+                </label>
+                <input type="file" id="camera-input" accept="image/*" capture="environment" multiple hidden>
+
+                <label class="btn btn-secondary" for="gallery-input">
+                    <span class="btn-icon">🖼️</span>
+                    Choose from Gallery
+                </label>
+                <input type="file" id="gallery-input" accept="image/*" multiple hidden>
+            </div>
+
+            <div id="file-list" class="file-list hidden">
+                <div class="file-list-header">Selected:</div>
+                <ul id="files"></ul>
+            </div>
+
+            <button id="send-btn" class="btn btn-send hidden" disabled>
+                SEND DOCUMENT
+            </button>
+        </div>
+
+        <div id="progress-section" class="progress-section hidden">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <p class="progress-text" id="progress-text">Uploading...</p>
+        </div>
+
+        <div id="status-section" class="status-section hidden">
+            <div class="status-icon" id="status-icon">⏳</div>
+            <p class="status-message" id="status-message">Processing your document...</p>
+        </div>
+
+        <div id="done-section" class="done-section hidden">
+            <div class="done-icon">✅</div>
+            <h2>Document Submitted!</h2>
+            <p>Your document is being processed. The shopkeeper will confirm shortly.</p>
+            <button class="btn btn-primary" id="upload-more-btn">Upload More</button>
+        </div>
+
+        <div id="error-section" class="error-section hidden">
+            <div class="error-icon">⚠️</div>
+            <p class="error-message" id="error-message"></p>
+            <button class="btn btn-primary" id="retry-btn">Try Again</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

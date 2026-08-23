@@ -1,0 +1,25 @@
+{
+  "document_name": "Voter ID",
+  "document_id": "voter_id",
+  "detection_rules": {
+    "keywords": ["ELECTION COMMISSION OF INDIA", "Voter ID", "मतदाता पहचान", "EPIC"],
+    "id_pattern": "[A-Z]{3}\\d{7}",
+    "geometry": {
+      "expected_aspect_ratio": 1.586,
+      "tolerance": 0.15
+    }
+  },
+  "target_width_mm": 85.6,
+  "target_height_mm": 54.0,
+  "target_width_px": 1063,
+  "target_height_px": 674,
+  "aspect_ratio": 1.586,
+  "margin_mm": 3.0,
+  "margin_px": 37,
+  "color_mode": "grayscale",
+  "print_configuration": {
+    "orientation": "landscape",
+    "duplex": false,
+    "copies": 1
+  }
+}

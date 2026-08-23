@@ -1,0 +1,25 @@
+{
+  "document_name": "Aadhaar Card",
+  "document_id": "aadhaar",
+  "detection_rules": {
+    "keywords": ["आधार", "AADHAAR", "भारत सरकार", "Government of India"],
+    "id_pattern": "\\d{4}\\s\\d{4}\\s\\d{4}",
+    "geometry": {
+      "expected_aspect_ratio": 1.586,
+      "tolerance": 0.15
+    }
+  },
+  "target_width_mm": 85.6,
+  "target_height_mm": 54.0,
+  "target_width_px": 1063,
+  "target_height_px": 674,
+  "aspect_ratio": 1.586,
+  "margin_mm": 3.0,
+  "margin_px": 37,
+  "color_mode": "grayscale",
+  "print_configuration": {
+    "orientation": "landscape",
+    "duplex": false,
+    "copies": 1
+  }
+}
