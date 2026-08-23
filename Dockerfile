@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
-RUN mkdir -p ./static/previews ./static/qr
+RUN mkdir -p ./static/previews ./static/qr /tmp/runova/uploads /tmp/runova/outputs /tmp/runova/previews
 
 WORKDIR /app/backend
 
