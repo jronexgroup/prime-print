@@ -13,7 +13,7 @@ from app.api.shop import router as shop_router
 from app.ws.agent import router as ws_router
 from app.services.file_manager import start_cleanup_task
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 @asynccontextmanager
