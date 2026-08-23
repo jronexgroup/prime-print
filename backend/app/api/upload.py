@@ -56,6 +56,8 @@ async def process_job_background(job_id: str):
                 await db.commit()
 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 await JobManager.transition_document(
                     db, doc.document_id, "FAILED", error=str(e)
                 )
@@ -68,6 +70,10 @@ async def process_job_background(job_id: str):
             target = "FAILED" if has_failed else "READY"
             await JobManager.transition_job(db, job_id, target)
             await db.commit()
+
+
+def _preview_url(doc_id: str) -> str:
+    return f"/api/v1/preview/{doc_id}"
 
 
 @router.post("/upload/{shop_id}", response_model=JobResponse, status_code=201)
@@ -110,6 +116,7 @@ async def upload_documents(
                 },
             )
 
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
 
         doc = Document(
@@ -139,7 +146,7 @@ async def upload_documents(
                 "document_id": d.document_id,
                 "document_type": d.document_type,
                 "status": d.status,
-                "preview_url": f"/static/previews/{d.document_id}.jpg" if d.preview_path else None,
+                "preview_url": _preview_url(d.document_id) if d.preview_path else None,
                 "error_message": d.error_message,
             }
             for d in documents

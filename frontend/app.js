@@ -26,7 +26,7 @@ let selectedFiles = [];
 
 function init() {
     if (!SHOP_ID) {
-        showError('No shop ID provided. Please scan the QR code again.');
+        showError('No shop ID. Please scan the QR code or add ?shop_id=xxx to the URL.');
         return;
     }
     loadShopInfo();
@@ -41,9 +41,7 @@ async function loadShopInfo() {
             shopName.textContent = shop.shop_name;
             shopInfo.classList.remove('hidden');
         }
-    } catch (e) {
-        // Ignore - shop info is optional
-    }
+    } catch (e) {}
 }
 
 function setupEventListeners() {
@@ -96,7 +94,6 @@ function updateFileList() {
 
 async function handleSend() {
     if (selectedFiles.length === 0) return;
-
     sendBtn.disabled = true;
 
     showProgress();
@@ -106,24 +103,22 @@ async function handleSend() {
     });
 
     try {
-        const xhr = new XMLHttpRequest();
-
-        xhr.upload.addEventListener('progress', (e) => {
-            if (e.lengthComputable) {
-                const pct = Math.round((e.loaded / e.total) * 100);
-                progressFill.style.width = pct + '%';
-                progressText.textContent = `Uploading... ${pct}%`;
-            }
-        });
-
         const response = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    progressFill.style.width = pct + '%';
+                    progressText.textContent = `Uploading... ${pct}%`;
+                }
+            });
             xhr.onload = () => {
                 if (xhr.status >= 200 && xhr.status < 300) {
                     resolve(JSON.parse(xhr.responseText));
                 } else {
                     try {
                         const err = JSON.parse(xhr.responseText);
-                        reject(new Error(err.detail?.error?.message || 'Upload failed'));
+                        reject(new Error(err.detail?.error?.message || err.detail || 'Upload failed'));
                     } catch {
                         reject(new Error('Upload failed'));
                     }
@@ -143,8 +138,8 @@ async function handleSend() {
 }
 
 async function pollJobStatus(jobId) {
-    const maxAttempts = 120;
     let attempt = 0;
+    const maxAttempts = 120;
 
     const poll = async () => {
         if (attempt >= maxAttempts) {
@@ -155,6 +150,7 @@ async function pollJobStatus(jobId) {
 
         try {
             const res = await fetch(`${API_BASE}/jobs/${jobId}`);
+            if (!res.ok) throw new Error('Status check failed');
             const job = await res.json();
 
             const readyCount = job.documents.filter(d => d.status === 'READY').length;
@@ -173,7 +169,6 @@ async function pollJobStatus(jobId) {
 
             statusMessage.textContent = `Processing... (${readyCount + failedCount}/${total} done)`;
             setTimeout(poll, 2000);
-
         } catch (e) {
             setTimeout(poll, 3000);
         }

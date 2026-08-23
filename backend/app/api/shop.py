@@ -1,9 +1,6 @@
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models import Job, Shop
@@ -11,6 +8,10 @@ from app.schemas import JobResponse, PendingJobsResponse, ShopCreate, ShopRespon
 from app.services.job_manager import JobManager
 
 router = APIRouter(tags=["shop"])
+
+
+def _preview_url(doc_id: str) -> str:
+    return f"/api/v1/preview/{doc_id}"
 
 
 @router.post("/shop", response_model=ShopResponse, status_code=201)
@@ -51,7 +52,7 @@ async def get_pending_jobs(shop_id: str, db: AsyncSession = Depends(get_db)):
                         "document_id": d.document_id,
                         "document_type": d.document_type,
                         "status": d.status,
-                        "preview_url": f"/static/previews/{d.document_id}.jpg" if d.preview_path else None,
+                        "preview_url": _preview_url(d.document_id) if d.preview_path else None,
                         "error_message": d.error_message,
                     }
                     for d in j.documents

@@ -1,25 +1,24 @@
-import logging
 import os
 import subprocess
-import tempfile
-from pathlib import Path
+import logging
 
-import requests
-
-logger = logging.getLogger("runova_agent")
+logger = logging.getLogger("agent")
 
 
 def download_pdf(server_url: str, document_id: str, dest_dir: str) -> str | None:
+    import requests
     try:
-        url = f"{server_url}/documents/{document_id}/pdf"
+        url = f"{server_url}/api/v1/pdf/{document_id}"
+        logger.info(f"Downloading PDF from {url}")
         resp = requests.get(url, stream=True, timeout=30)
         if resp.status_code == 200:
             dest_path = os.path.join(dest_dir, f"{document_id}.pdf")
             with open(dest_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
+            logger.info(f"PDF saved to {dest_path}")
             return dest_path
-        logger.error(f"Download failed: {resp.status_code}")
+        logger.error(f"Download failed: HTTP {resp.status_code}")
     except Exception as e:
         logger.error(f"Download error: {e}")
     return None
@@ -30,24 +29,19 @@ def print_pdf(pdf_path: str, printer_name: str = None) -> bool:
         if os.name == "nt":
             if printer_name:
                 subprocess.run(
-                    [
-                        "rundll32.exe",
-                        "shell32.dll,ShellExec_pdf",
-                        "print",
-                        f"/d {printer_name}",
-                        pdf_path,
-                    ],
-                    check=True,
+                    ["rundll32.exe", "shell32.dll,ShellExec_rundll32", "pdf.dll,PrintPDF", pdf_path],
                     timeout=30,
+                    capture_output=True,
                 )
             else:
                 os.startfile(pdf_path, "print")
             return True
         else:
+            cmd = ["lp"]
             if printer_name:
-                subprocess.run(["lp", "-d", printer_name, pdf_path], check=True, timeout=30)
-            else:
-                subprocess.run(["lp", pdf_path], check=True, timeout=30)
+                cmd += ["-d", printer_name]
+            cmd.append(pdf_path)
+            subprocess.run(cmd, check=True, timeout=30)
             return True
     except Exception as e:
         logger.error(f"Print error: {e}")

@@ -1,79 +1,93 @@
+import json
 import logging
+import os
 import sys
+import tempfile
 import threading
+import time
 import uuid
 
 import requests
 
 from websocket_client import WebSocketClient
 from printer import download_pdf, print_pdf
-from preview import PreviewWindow
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()],
 )
-logger = logging.getLogger("runova_agent")
+logger = logging.getLogger("agent")
 
-SERVER_URL = "http://localhost:8000"
-DEVICE_ID = str(uuid.uuid4())
-POLL_INTERVAL = 5
+DEFAULT_SERVER = "http://localhost:8000"
 
 
 class RunovaAgent:
-    def __init__(self):
-        self.server_url = SERVER_URL
-        self.device_id = DEVICE_ID
+    def __init__(self, server_url: str, device_id: str):
+        self.server_url = server_url.rstrip("/")
+        self.device_id = device_id
         self.shop_id = None
         self.ws_client = None
-        self.preview = PreviewWindow()
         self._running = False
+        self._preview_shown = set()
 
     def run(self):
-        logger.info(f"Starting Runova Print Agent (device: {self.device_id[:8]}...)")
-        logger.info(f"Server: {self.server_url}")
+        logger.info("=" * 50)
+        logger.info("  Runova Print Agent")
+        logger.info(f"  Server:  {self.server_url}")
+        logger.info(f"  Device:  {self.device_id[:12]}...")
+        logger.info("=" * 50)
 
         self.shop_id = self._setup_shop()
         if not self.shop_id:
-            logger.error("Failed to setup shop. Exiting.")
+            logger.error("Failed to setup shop. Check server is running.")
             return
 
+        logger.info(f"Shop ID: {self.shop_id}")
         self._running = True
+
         self.ws_client = WebSocketClient(
             self.server_url, self.device_id, self._on_ws_message
         )
 
-        ws_thread = threading.Thread(target=lambda: self._run_ws(), daemon=True)
+        ws_thread = threading.Thread(target=self._run_ws_loop, daemon=True)
         ws_thread.start()
 
         poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
         poll_thread.start()
 
-        logger.info("Agent is running. Press Ctrl+C to stop.")
+        logger.info("Agent running. Press Ctrl+C to stop.")
         try:
             while self._running:
-                import time
                 time.sleep(1)
         except KeyboardInterrupt:
+            logger.info("Shutting down...")
             self._running = False
             if self.ws_client:
-                self.ws_client.disconnect()
+                self.ws_client.stop()
 
-    def _run_ws(self):
-        import asyncio
-        asyncio.run(self.ws_client.connect())
+    def _run_ws_loop(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(self.ws_client.connect())
 
     def _setup_shop(self) -> str | None:
         try:
-            resp = requests.get(f"{self.server_url}/api/v1/shop/{self.device_id}")
+            url = f"{self.server_url}/api/v1/shop/{self.device_id}"
+            resp = requests.get(url, timeout=5)
             if resp.status_code == 200:
                 shop = resp.json()
                 logger.info(f"Found existing shop: {shop['shop_name']}")
                 return shop["shop_id"]
+        except Exception:
+            pass
 
+        try:
+            url = f"{self.server_url}/api/v1/shop"
             resp = requests.post(
-                f"{self.server_url}/api/v1/shop",
+                url,
                 json={"shop_name": f"Shop {self.device_id[:8]}", "device_id": self.device_id},
+                timeout=5,
             )
             if resp.status_code == 201:
                 shop = resp.json()
@@ -85,109 +99,145 @@ class RunovaAgent:
 
     def _on_ws_message(self, data: dict):
         msg_type = data.get("type")
-
         if msg_type == "new_job":
             job_id = data.get("job_id")
-            logger.info(f"New job received: {job_id}")
-            self._process_job(job_id)
-
-        elif msg_type == "job_updated":
-            logger.info(f"Job updated: {data.get('job_id')}")
+            logger.info(f"New job: {job_id}")
+            threading.Thread(target=self._process_job, args=(job_id,), daemon=True).start()
 
     def _process_job(self, job_id: str):
         try:
-            resp = requests.get(f"{self.server_url}/api/v1/jobs/{job_id}")
+            resp = requests.get(f"{self.server_url}/api/v1/jobs/{job_id}", timeout=10)
             if resp.status_code != 200:
                 return
-
             job = resp.json()
             for doc in job.get("documents", []):
-                if doc["status"] == "READY":
-                    self._handle_ready_document(job_id, doc)
+                if doc["status"] == "READY" and doc["document_id"] not in self._preview_shown:
+                    self._handle_document(doc)
         except Exception as e:
-            logger.error(f"Job processing error: {e}")
+            logger.error(f"Job error: {e}")
 
-    def _handle_ready_document(self, job_id: str, doc: dict):
+    def _handle_document(self, doc: dict):
         doc_id = doc["document_id"]
         doc_type = doc.get("document_type", "unknown")
+        self._preview_shown.add(doc_id)
 
-        import tempfile
+        logger.info(f"Document ready: {doc_type} ({doc_id[:8]}...)")
+
         temp_dir = tempfile.mkdtemp()
-
         pdf_path = download_pdf(self.server_url, doc_id, temp_dir)
         if not pdf_path:
             logger.error(f"Failed to download PDF for {doc_id}")
             return
 
-        logger.info(f"Document ready: {doc_type} ({doc_id[:8]}...)")
+        self._show_popup(doc_id, doc_type, pdf_path)
 
-        self.preview.show(
-            document_id=doc_id,
-            document_type=doc_type,
-            pdf_path=pdf_path,
-            on_confirm=self._on_confirm,
-            on_reject=self._on_reject,
-        )
-
-    def _on_confirm(self, document_id: str, pdf_path: str):
-        logger.info(f"Printing document {document_id[:8]}...")
-
-        success = print_pdf(pdf_path)
-        if success:
-            import asyncio
-            asyncio.run(self.ws_client.send({
-                "type": "print_complete",
-                "document_id": document_id,
-            }))
-            logger.info("Print complete")
-        else:
-            import asyncio
-            asyncio.run(self.ws_client.send({
-                "type": "print_failed",
-                "document_id": document_id,
-                "error": "Print failed",
-            }))
-
-    def _on_reject(self, document_id: str):
-        logger.info(f"Document {document_id[:8]} rejected")
+    def _show_popup(self, doc_id: str, doc_type: str, pdf_path: str):
         try:
-            requests.patch(
-                f"{self.server_url}/api/v1/jobs/0/documents/{document_id}/reject"
-            )
-        except Exception:
-            pass
+            import tkinter as tk
+            from tkinter import messagebox, font as tkfont
+
+            root = tk.Tk()
+            root.title("Runova Print")
+            root.geometry("420x480")
+            root.resizable(False, False)
+            root.configure(bg="white")
+
+            header = tk.Frame(root, bg="#1a73e8", height=50)
+            header.pack(fill="x")
+            header.pack_propagate(False)
+            tk.Label(header, text="RUNOVA PRINT", bg="#1a73e8", fg="white",
+                     font=("Arial", 14, "bold")).pack(expand=True)
+
+            body = tk.Frame(root, bg="white", pady=20)
+            body.pack(fill="both", expand=True, padx=20)
+
+            tk.Label(body, text="New Document Ready", font=("Arial", 16, "bold"),
+                     bg="white").pack()
+            tk.Label(body, text=f"Type: {doc_type.replace('_', ' ').title()}",
+                     font=("Arial", 12), fg="#666", bg="white").pack(pady=(8, 0))
+            tk.Label(body, text=f"ID: {doc_id[:8]}...", font=("Arial", 10),
+                     fg="#999", bg="white").pack(pady=(4, 0))
+
+            preview_frame = tk.Frame(body, bg="#f0f0f0", height=200)
+            preview_frame.pack(fill="x", pady=20)
+            preview_frame.pack_propagate(False)
+            tk.Label(preview_frame, text=f"[ {pdf_path.split('/')[-1]} ]",
+                     bg="#f0f0f0", fg="#666", font=("Arial", 11)).pack(expand=True)
+
+            btn_frame = tk.Frame(root, bg="white", pady=15)
+            btn_frame.pack(fill="x")
+
+            def on_confirm():
+                logger.info(f"Printing {doc_id[:8]}...")
+                success = print_pdf(pdf_path)
+                if success:
+                    logger.info("Print complete!")
+                    try:
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(
+                            self.ws_client.send({"type": "print_complete", "document_id": doc_id})
+                        )
+                        loop.close()
+                    except Exception:
+                        pass
+                else:
+                    logger.error("Print failed!")
+                root.destroy()
+
+            def on_reject():
+                logger.info(f"Rejected {doc_id[:8]}")
+                root.destroy()
+
+            confirm_btn = tk.Button(btn_frame, text="PRINT", bg="#34a853", fg="white",
+                                    font=("Arial", 12, "bold"), padx=30, pady=10,
+                                    command=on_confirm, cursor="hand2")
+            confirm_btn.pack(side="left", padx=(10, 5), expand=True, fill="x")
+
+            reject_btn = tk.Button(btn_frame, text="REJECT", bg="#ea4335", fg="white",
+                                   font=("Arial", 12, "bold"), padx=30, pady=10,
+                                   command=on_reject, cursor="hand2")
+            reject_btn.pack(side="right", padx=(5, 10), expand=True, fill="x")
+
+            root.mainloop()
+
+        except ImportError:
+            logger.warning("tkinter not available. Using console output.")
+            logger.info(f"Document {doc_id[:8]} ready: {doc_type} -> {pdf_path}")
+        except Exception as e:
+            logger.error(f"Popup error: {e}")
 
     def _poll_loop(self):
-        import time
         while self._running:
             try:
                 resp = requests.get(
-                    f"{self.server_url}/api/v1/shop/{self.shop_id}/pending"
+                    f"{self.server_url}/api/v1/shop/{self.shop_id}/pending", timeout=10
                 )
                 if resp.status_code == 200:
-                    data = resp.json()
-                    for job in data.get("jobs", []):
+                    for job in resp.json().get("jobs", []):
                         if job["status"] in ("READY", "PREVIEW"):
                             for doc in job.get("documents", []):
-                                if doc["status"] == "READY":
-                                    self._handle_ready_document(job["job_id"], doc)
+                                if doc["status"] == "READY" and doc["document_id"] not in self._preview_shown:
+                                    threading.Thread(
+                                        target=self._handle_document, args=(doc,), daemon=True
+                                    ).start()
             except Exception:
                 pass
-            time.sleep(POLL_INTERVAL)
+            time.sleep(5)
+
+
+import asyncio
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Runova Print Agent")
+    parser.add_argument("--server", default=DEFAULT_SERVER, help="Server URL")
+    parser.add_argument("--device-id", default=str(uuid.uuid4()), help="Device ID")
+    args = parser.parse_args()
+
+    agent = RunovaAgent(args.server, args.device_id)
+    agent.run()
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Runova Print Agent")
-    parser.add_argument("--server", default=SERVER_URL, help="Server URL")
-    parser.add_argument("--device-id", default=None, help="Device ID")
-    args = parser.parse_args()
-
-    if args.server:
-        SERVER_URL = args.server
-    if args.device_id:
-        DEVICE_ID = args.device_id
-
-    agent = RunovaAgent()
-    agent.run()
+    main()
