@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+venv
+.env
+*.db
+uploads
+outputs
+.git
+.gitignore
+.pytest_cache
+test_pipeline.py
+*.md

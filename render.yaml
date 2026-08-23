@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: runova-print
+    runtime: docker
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: RENDER
+        value: "true"
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./runova.db
+    healthCheckPath: /health
+    autoDeploy: true
