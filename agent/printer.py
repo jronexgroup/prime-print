@@ -1,8 +1,10 @@
 import os
+import platform
 import subprocess
 import logging
 
 logger = logging.getLogger("agent")
+SYSTEM = platform.system()
 
 
 def download_pdf(server_url: str, document_id: str, dest_dir: str) -> str | None:
@@ -24,17 +26,41 @@ def download_pdf(server_url: str, document_id: str, dest_dir: str) -> str | None
     return None
 
 
-def print_pdf(pdf_path: str, printer_name: str = None) -> bool:
+def open_pdf(pdf_path: str) -> bool:
+    """Open PDF in default viewer (non-blocking)."""
     try:
-        if os.name == "nt":
+        if SYSTEM == "Windows":
+            os.startfile(pdf_path)
+            return True
+        elif SYSTEM == "Darwin":
+            subprocess.Popen(["open", pdf_path])
+            return True
+        else:
+            subprocess.Popen(["xdg-open", pdf_path])
+            return True
+    except Exception as e:
+        logger.error(f"Open PDF error: {e}")
+        return False
+
+
+def print_pdf(pdf_path: str, printer_name: str = None) -> bool:
+    """Send PDF to system printer."""
+    try:
+        if SYSTEM == "Windows":
             if printer_name:
                 subprocess.run(
                     ["rundll32.exe", "shell32.dll,ShellExec_rundll32", "pdf.dll,PrintPDF", pdf_path],
-                    timeout=30,
-                    capture_output=True,
+                    timeout=30, capture_output=True,
                 )
             else:
                 os.startfile(pdf_path, "print")
+            return True
+        elif SYSTEM == "Darwin":
+            cmd = ["lpr"]
+            if printer_name:
+                cmd += ["-P", printer_name]
+            cmd.append(pdf_path)
+            subprocess.run(cmd, check=True, timeout=30)
             return True
         else:
             cmd = ["lp"]
